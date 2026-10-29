@@ -3,7 +3,7 @@ import type { SignalReader } from './types'
 
 const spec = {
   id: 'storage', label: 'Storage estimate', category: 'Storage',
-  explanation: 'The browser’s approximate storage quota and current usage, without writing anything.', trackerUse: 'A tracker can use quota differences as a stable browser signal.', changesWhen: 'Browser profile, device capacity, or storage policy can affect it.'
+  explanation: 'The browser’s approximate storage quota. This check does not write a test file.', trackerUse: 'A tracker can use quota differences as a stable browser signal.', changesWhen: 'Browser profile, device capacity, or storage policy can affect it.'
 }
 
 const read = async () => {

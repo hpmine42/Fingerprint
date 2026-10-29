@@ -3,7 +3,7 @@ import type { SignalReader } from './types'
 
 const spec = {
   id: 'voices', label: 'Speech voices', category: 'Hardware',
-  explanation: 'The available speech synthesis voice count and first three names.', trackerUse: 'A tracker can use voice names as a less familiar browser signal.', changesWhen: 'Installing voices or changing operating system/browser can change it.'
+  explanation: 'The voices returned at this check and up to their first three names. An empty list means none were returned at that moment; no speech is played.', trackerUse: 'A tracker can use voice names as a less familiar browser signal.', changesWhen: 'Installing voices or changing operating system/browser can change it.'
 }
 
 const read = () => {

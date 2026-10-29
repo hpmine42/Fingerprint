@@ -11,7 +11,7 @@ const read = async () => {
   const names = ['camera', 'microphone', 'geolocation', 'notifications'] as const
   const results = await Promise.all(names.map(async (name) => {
     try { return [name, (await navigator.permissions.query({ name } as PermissionDescriptor)).state] as const }
-    catch { return [name, 'not exposed'] as const }
+    catch { return [name, 'not exposed by this browser'] as const }
   }))
   return Object.fromEntries(results)
 }
