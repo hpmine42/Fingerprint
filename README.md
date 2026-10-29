@@ -30,4 +30,4 @@ npm test -- --run
 npm run build
 ```
 
-The GitHub Pages build uses the `/Fingerprint/` base path matching the repository name. CI runs typecheck, tests, and build for pull requests; deployment is restricted to pushes to `main`. The installable PWA uses a dark standalone manifest and a generated precache service worker.
+The GitHub Pages build uses the `/fingerprint/` base path matching the repository name. CI runs typecheck, tests, and build for pull requests; deployment is restricted to pushes to `main`. The installable PWA uses a dark standalone manifest and a generated precache service worker.
