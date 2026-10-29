@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Signal } from '../src/signals/types'
-import { diffSignals, fingerprint, normalizeValue, serializeSignals } from '../src/core'
+import { diffSignals, fingerprint, normalizeValue, serializeSignals, stabilityBySignal } from '../src/core'
 import { readSignal } from '../src/signals/read'
 
 function signal(id: string, value: Signal['value'], available = true): Signal {
@@ -27,6 +27,17 @@ describe('deterministic fingerprint core', () => {
     const normalized = serializeSignals([signal('missing', undefined as unknown as Signal['value'])])
     expect(normalized).not.toContain('undefined')
     expect(normalized).toContain('null')
+  })
+
+  it('marks each signal stable only when its normalized value matches across every run', () => {
+    const first = [signal('stable', ['b', 'a']), signal('flaky', 1), signal('hidden', null, false)]
+    const second = [signal('stable', ['a', 'b']), signal('flaky', 2), signal('hidden', null, false)]
+    expect(stabilityBySignal([first, second])).toEqual({ stable: true, flaky: false, hidden: true })
+  })
+
+  it('does not mark a signal stable when a run is missing it', () => {
+    expect(stabilityBySignal([[signal('present', 'x')], []])).toEqual({})
+    expect(stabilityBySignal([[], [signal('present', 'x')]])).toEqual({ present: false })
   })
 
   it('reports exactly the changed rows in a before and after receipt', () => {

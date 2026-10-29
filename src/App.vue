@@ -2,13 +2,15 @@
 import { computed, ref, shallowRef } from 'vue'
 import { catalogue, catalogueLabels } from './signals/catalogue'
 import type { Signal, SignalValue } from './signals/types'
-import { diffSignals, fingerprint, normalizeValue } from './core'
+import { diffSignals, fingerprint, stabilityBySignal } from './core'
 import { forgetVisit, loadVisit, saveVisit, type SavedVisit } from './persistence'
 
 const signals = shallowRef<Signal[]>([])
 const fullHash = ref('')
 const busy = ref(false)
 const activeLabel = ref('')
+const progressRun = ref(1)
+const progressTotal = ref(1)
 const hasRun = ref(false)
 const repeated = ref(false)
 const stability = ref<Record<string, boolean>>({})
@@ -38,15 +40,19 @@ function displayValue(value: SignalValue): string {
   return String(value)
 }
 
+function isUnavailable(value: SignalValue): boolean {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && value.unavailable === true
+}
+
 function displayChangedValue(value: SignalValue): string {
-  if (typeof value === 'object' && value !== null && 'unavailable' in value) return 'Unavailable'
+  if (isUnavailable(value)) return 'Unavailable'
   return displayValue(value)
 }
 
 function savedSignals(saved: SavedVisit, current: Signal[]): Signal[] {
   return saved.values.map((entry) => {
     const template = current.find((signal) => signal.id === entry.id)
-    const unavailable = typeof entry.value === 'object' && entry.value !== null && 'unavailable' in entry.value
+    const unavailable = isUnavailable(entry.value)
     return {
       id: entry.id,
       label: template?.label ?? entry.id,
@@ -71,40 +77,40 @@ async function runMeasurement(repeatFive = false): Promise<void> {
   }
   const runs: Signal[][] = []
   const runCount = repeatFive ? 5 : 1
+  progressTotal.value = runCount
   try {
     for (let runIndex = 0; runIndex < runCount; runIndex += 1) {
+      progressRun.value = runIndex + 1
       const current: Signal[] = []
       for (const [signalIndex, reader] of catalogue.entries()) {
         activeLabel.value = catalogueLabels[signalIndex] ?? 'next signal'
-        const signal = await reader()
-        current.push(signal)
+        current.push(await reader())
       }
       runs.push(current)
       signals.value = current
     }
+
     const latest = runs[runs.length - 1] ?? []
     signals.value = latest
     const hash = await fingerprint(latest)
     fullHash.value = hash
-    const priorHash = previousVisit.value?.id
-    if (!hasRun.value && previousVisit.value) {
-      sameAsLast.value = priorHash === hash
-      changes.value = diffSignals(savedSignals(previousVisit.value, latest), latest).map((change) => ({ id: change.id, label: change.label, before: displayChangedValue(change.before), after: displayChangedValue(change.after) }))
+
+    if (previousVisit.value) {
+      sameAsLast.value = previousVisit.value.id === hash
+      changes.value = diffSignals(savedSignals(previousVisit.value, latest), latest).map((change) => ({
+        id: change.id,
+        label: change.label,
+        before: displayChangedValue(change.before),
+        after: displayChangedValue(change.after)
+      }))
     }
+
     if (repeatFive) {
-      stability.value = Object.fromEntries(latest.map((signal) => [
-        signal.id,
-        runs.every((run) => {
-          const other = run.find((item) => item.id === signal.id)
-          return Boolean(other) && JSON.stringify(normalizeValue(other?.available ? other.value : { unavailable: true })) ===
-            JSON.stringify(normalizeValue(signal.available ? signal.value : { unavailable: true }))
-        })
-      ]))
+      stability.value = stabilityBySignal(runs)
       repeated.value = true
     }
-    receiptSaved.value = true
+
     saveVisit(hash, latest)
-    // Detect storage refusal without exposing or retaining the signal snapshot elsewhere.
     receiptSaved.value = loadVisit()?.id === hash
     hasRun.value = true
   } catch (error) {
@@ -112,107 +118,131 @@ async function runMeasurement(repeatFive = false): Promise<void> {
   } finally {
     busy.value = false
     activeLabel.value = ''
+    progressTotal.value = 1
+    progressRun.value = 1
   }
 }
 
 function forgetMe(): void {
-  const receiptRemoved = forgetVisit()
+  const forgetResult = forgetVisit()
   previousVisit.value = null
   changes.value = []
   sameAsLast.value = null
   receiptSaved.value = false
-  forgetMessage.value = receiptRemoved ? 'Your saved local receipt has been removed.' : 'This browser blocked access to its local receipt, so the app could not remove it.'
+  forgetMessage.value = forgetResult === 'removed'
+    ? 'Your saved local receipt has been removed.'
+    : forgetResult === 'empty'
+      ? 'There was no saved local receipt to remove.'
+      : 'This browser blocked access to its local receipt, so the app could not remove it.'
 }
 </script>
 
 <template>
   <main class="shell">
     <header class="topbar">
-      <a class="wordmark" href="#top" aria-label="Fingerprint home"><span class="mark" aria-hidden="true"><i></i></span>fingerprint</a>
-      <span class="local-label"><span class="local-dot"></span> LOCAL ONLY</span>
+      <a class="wordmark" href="#top" aria-label="Fingerprint home"><span class="wordmark-mark" aria-hidden="true">f</span>fingerprint</a>
+      <p class="topbar-note">Signal readings stay in this browser</p>
     </header>
 
     <section id="top" class="intro">
-      <p class="eyebrow">A browser mirror</p>
-      <h1>Your browser has<br /><em>a signature.</em></h1>
-      <p class="lede">Websites can read more than you might think. See the signals your browser shares — measured here, on this device, never sent anywhere.</p>
-      <div class="honesty-line"><span aria-hidden="true">↳</span> A VPN does not change most of these signals. Private browsing usually does not either.</div>
-      <button v-if="!hasRun" class="button primary" :disabled="busy" @click="runMeasurement()">
-        {{ busy ? 'Measuring…' : 'Check my browser' }} <span aria-hidden="true">→</span>
-      </button>
-      <div v-else class="actions">
-        <button class="button primary" :disabled="busy" @click="runMeasurement(true)">{{ busy ? 'Measuring…' : 'Repeat 5 times' }} <span aria-hidden="true">↻</span></button>
+      <p class="intro-label">A local browser check</p>
+      <h1>What can a website<br class="desktop-break" /> read from your browser?</h1>
+      <p class="lede">Tap once to measure {{ catalogue.length }} browser signals and see what each one can reveal. The readings stay on this device.</p>
+      <p class="honesty-line">A VPN does not change most of these signals. Private browsing usually does not either.</p>
+      <div v-if="!hasRun" class="actions">
+        <button class="button primary" :disabled="busy" @click="runMeasurement()">{{ busy ? 'Measuring…' : 'Check my browser' }}</button>
         <button class="button secondary" :disabled="busy" @click="forgetMe">Forget me</button>
       </div>
-      <p v-if="busy" class="progress" aria-live="polite"><span class="pulse"></span> Reading {{ activeLabel || 'the next signal' }}<span class="progress-note"> · no sound, no prompts</span></p>
+      <div v-else class="actions">
+        <button class="button primary" :disabled="busy" @click="runMeasurement(true)">{{ busy ? 'Measuring…' : 'Repeat 5 measurements' }}</button>
+        <button class="button secondary" :disabled="busy" @click="forgetMe">Forget me</button>
+      </div>
+      <p v-if="!hasRun" class="storage-consent">Starting a check saves the ID and normalized readings in this browser so a later visit can be compared. You can remove them with “Forget me”.</p>
+      <p v-if="busy" class="progress" aria-live="polite">
+        <span v-if="progressTotal > 1">Measurement {{ progressRun }} of {{ progressTotal }} · </span>
+        Reading <strong>{{ activeLabel || 'the next signal' }}</strong><span class="progress-note"> · no sound or permission prompts</span>
+      </p>
       <p v-if="forgetMessage" class="notice" role="status">{{ forgetMessage }}</p>
-      <p v-if="hasRun && !forgetMessage" class="receipt-note">{{ receiptSaved ? 'Your last ID and signal values are stored in this browser only so this page can compare your next visit.' : 'This browser did not allow a local receipt to be saved.' }}</p>
+      <p v-if="hasRun && !forgetMessage" class="receipt-note">{{ receiptSaved ? 'Stored here only: your last ID and normalized signal readings, for the next-visit comparison.' : 'This browser did not allow a local receipt to be saved.' }}</p>
     </section>
 
     <template v-if="hasRun">
       <section class="summary" aria-live="polite">
-        <div class="summary-number">{{ signals.length }}</div>
-        <div><strong>signals checked</strong><p>{{ availableCount }} values available · {{ signals.length - availableCount }} unavailable with a reason</p></div>
+        <p class="summary-count"><strong>{{ signals.length }}</strong><span>signals checked</span></p>
+        <p class="summary-detail">{{ availableCount }} values available <span aria-hidden="true">·</span> {{ signals.length - availableCount }} unavailable with a reason</p>
       </section>
 
       <section v-if="sameAsLast !== null" class="visit-diff" :class="sameAsLast ? 'unchanged' : 'changed'" aria-live="polite">
-        <div class="diff-symbol" aria-hidden="true">{{ sameAsLast ? '＝' : '↗' }}</div>
         <div class="diff-copy">
           <h2>{{ sameAsLast ? 'Identical to last visit' : `${changes.length} ${changes.length === 1 ? 'signal' : 'signals'} changed` }}</h2>
-          <p>{{ sameAsLast ? 'The measured values and ID match the receipt saved in this browser.' : 'Compared with your last saved visit on this browser. Only these signal values differ.' }}</p>
+          <p>{{ sameAsLast ? 'The values and ID match the receipt saved in this browser.' : 'Compared with the previous receipt saved here.' }}</p>
           <div v-if="!sameAsLast && changes.length" class="changed-list">
             <div v-for="change in changes" :key="change.id" class="changed-row">
               <strong>{{ change.label }}</strong>
-              <span>{{ change.before }}</span><b aria-hidden="true">→</b><span>{{ change.after }}</span>
+              <span>{{ change.before }}</span><span class="change-arrow" aria-hidden="true">→</span><span>{{ change.after }}</span>
             </div>
           </div>
-          <p v-if="!receiptSaved" class="diff-footnote">No previous receipt could be saved, so a future visit cannot be compared.</p>
+          <p v-if="!receiptSaved" class="diff-footnote">This result could not be saved for a future visit.</p>
         </div>
       </section>
 
-      <section v-if="repeated" class="stability-callout">
-        <span class="stability-icon" aria-hidden="true">◎</span>
-        <p><strong>{{ stableCount }} of {{ signals.length }} signals stayed stable</strong> across five consecutive measurements. A flaky result changed during those runs; unavailable values are compared by availability, not by error wording.</p>
+      <section v-if="repeated" class="stability-note">
+        <p><strong>{{ stableCount }} of {{ signals.length }} signals were stable</strong> across five consecutive measurements. Unavailable readings are compared by availability, not by changing error wording.</p>
       </section>
 
       <section class="catalogue" aria-label="Browser signals">
-        <div class="section-heading"><div><p class="eyebrow">The readings</p><h2>What a page can see</h2></div><span v-if="repeated" class="status-key"><i class="stable-dot"></i> stable <i class="flaky-dot"></i> flaky</span></div>
-        <div v-for="([category, rows], groupIndex) in groups" :key="category" class="signal-group">
-          <h3 class="category-title"><span>{{ String(groupIndex + 1).padStart(2, '0') }}</span>{{ category }}</h3>
-          <article v-for="signal in rows" :key="signal.id" class="signal-card" :class="{ 'signal-changed': changes.some((change) => change.id === signal.id) }">
-            <div class="signal-topline"><h4>{{ signal.label }}</h4><span v-if="repeated" class="stability-state" :class="stability[signal.id] ? 'is-stable' : 'is-flaky'">{{ stability[signal.id] ? 'Stable' : 'Flaky' }}</span><span v-if="changes.some((change) => change.id === signal.id)" class="changed-tag">CHANGED</span></div>
-            <code class="signal-value" :class="{ unavailable: !signal.available }">{{ signal.available ? displayValue(signal.value) : signal.reason }}</code>
-            <p class="signal-explanation">{{ signal.explanation }}</p>
-            <div class="signal-notes"><p><span>TRACKERS MAY</span>{{ signal.trackerUse }}</p><p><span>WHAT CAN CHANGE IT</span>{{ signal.changesWhen }}</p></div>
+        <div class="section-heading">
+          <div><p class="section-label">The readings</p><h2>What a page can see</h2></div>
+          <p v-if="repeated" class="status-key"><span class="stable-mark">Stable</span><span class="flaky-mark">Flaky</span></p>
+        </div>
+        <section v-for="([category, rows]) in groups" :key="category" class="signal-group">
+          <h3 class="category-title">{{ category }}</h3>
+          <article v-for="signal in rows" :key="signal.id" class="signal-row" :class="{ 'signal-changed': changes.some((change) => change.id === signal.id) }">
+            <div class="signal-main">
+              <div class="signal-topline">
+                <h4>{{ signal.label }}</h4>
+                <span v-if="repeated" class="stability-state" :class="stability[signal.id] ? 'is-stable' : 'is-flaky'">{{ stability[signal.id] ? 'Stable' : 'Flaky' }}</span>
+                <span v-if="changes.some((change) => change.id === signal.id)" class="changed-tag">Changed</span>
+              </div>
+              <code class="signal-value" :class="{ unavailable: !signal.available }">{{ signal.available ? displayValue(signal.value) : signal.reason }}</code>
+              <p class="signal-explanation">{{ signal.explanation }}</p>
+            </div>
+            <div class="signal-context">
+              <p><strong>Tracker use</strong><span>{{ signal.trackerUse }}</span></p>
+              <p><strong>Can change when</strong><span>{{ signal.changesWhen }}</span></p>
+            </div>
           </article>
+        </section>
+      </section>
+
+      <section class="closing-note">
+        <h2>What this page cannot see</h2>
+        <div class="closing-columns">
+          <p>No location beyond the time zone. No name, browsing history, other tabs, or files. It does not ask for camera, microphone, location, or notification access.</p>
+          <p>A tracker with an IP address and a cookie could connect a browser profile to a network address and a returning visit. This app does not read your IP or set a cookie; its static host still handles the page request.</p>
         </div>
       </section>
 
-      <section class="closing-grid">
-        <article class="closing-card"><p class="eyebrow">The boundary</p><h2>What this page does <em>not</em> know</h2><p>No location beyond the time zone. No name, browsing history, other tabs, or files. It does not ask for camera, microphone, location, or notification access.</p></article>
-        <article class="closing-card inverse"><p class="eyebrow">The honest inverse</p><h2>Combined with more</h2><p>A tracker that also has an IP address and a cookie could connect this browser profile to a network address and a repeat visit. This page has neither your IP nor a cookie available to its code.</p></article>
-      </section>
-
-      <section class="id-panel">
-        <p class="eyebrow">All readings, one identifier</p>
-        <h2>Your browser’s ID</h2>
+      <section class="id-panel" aria-labelledby="id-heading">
+        <p class="section-label">The result</p>
+        <h2 id="id-heading">Your browser ID</h2>
         <div class="id-value" aria-label="Short browser identifier">{{ shortHash }}</div>
-        <p class="id-status" aria-live="polite"><span aria-hidden="true">{{ sameAsLast ? '✓' : '·' }}</span>{{ sameAsLast ? 'Same as last visit' : sameAsLast === false ? `${changes.length} signals differ from last visit` : 'No earlier receipt to compare' }}</p>
+        <p class="id-status" aria-live="polite">{{ sameAsLast ? 'Same as last visit' : sameAsLast === false ? `${changes.length} signals differ from last visit` : 'No earlier receipt to compare' }}</p>
         <details class="hash-details">
           <summary>Show full SHA-256 hash</summary>
           <code>{{ fullHash }}</code>
         </details>
-        <p class="hash-method">SHA-256 of normalized signal values. Not a population rarity estimate.</p>
+        <p class="hash-method">SHA-256 of normalized signal values. Not a rarity estimate.</p>
       </section>
 
-      <p class="privacy-foot">No account. No analytics. No signal uploads. The only saved data is the local receipt described above. <button class="text-button" @click="forgetMe">Forget me</button></p>
+      <p class="privacy-foot">No account, analytics, or signal uploads. The local receipt exists only for the comparison above. <button class="text-button" @click="forgetMe">Forget me</button></p>
     </template>
 
-    <section v-else class="preview-card">
-      <span class="preview-mark" aria-hidden="true">◉</span>
-      <div><h2>Nothing runs until you ask.</h2><p>One tap measures the signals. Your ID appears at the end, with a clear receipt of what stayed the same.</p></div>
+    <section v-else class="empty-state">
+      <p>Nothing is measured until you choose.</p>
+      <p>The ID appears after the readings, with any difference from your last visit shown first.</p>
     </section>
 
-    <footer><span>FINGERPRINT · A MIRROR, NOT A TRACKER</span><span>BUILT TO MEASURE, EXPLAIN, FORGET</span></footer>
+    <footer><span>FINGERPRINT</span><span>A browser mirror, not a tracker.</span></footer>
   </main>
 </template>

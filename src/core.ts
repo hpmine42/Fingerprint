@@ -7,7 +7,11 @@ export function normalizeValue(value: unknown): SignalValue {
   if (typeof value === 'number') return Number.isFinite(value) ? Number(value.toFixed(4)) : null
   if (typeof value === 'boolean') return value
   if (Array.isArray(value)) {
-    return value.map(normalizeValue).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+    return value.map(normalizeValue).sort((left, right) => {
+      const leftJson = JSON.stringify(left)
+      const rightJson = JSON.stringify(right)
+      return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0
+    })
   }
   if (typeof value === 'object') {
     const record = value as Record<string, unknown>
@@ -29,6 +33,20 @@ export function serializeSignals(signals: Signal[]): string {
 
 export async function fingerprint(signals: Signal[]): Promise<string> {
   return sha256(serializeSignals(signals))
+}
+
+export function stabilityBySignal(runs: Signal[][]): Record<string, boolean> {
+  const latest = runs[runs.length - 1] ?? []
+  return Object.fromEntries(latest.map((signal) => [
+    signal.id,
+    runs.length > 0 && runs.every((run) => {
+      const other = run.find((item) => item.id === signal.id)
+      if (!other) return false
+      const otherValue = other.available ? other.value : { unavailable: true }
+      const latestValue = signal.available ? signal.value : { unavailable: true }
+      return JSON.stringify(normalizeValue(otherValue)) === JSON.stringify(normalizeValue(latestValue))
+    })
+  ]))
 }
 
 export interface SignalChange {
