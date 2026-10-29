@@ -3,6 +3,7 @@ import { computed, ref, shallowRef } from 'vue'
 import { catalogue, catalogueLabels } from './signals/catalogue'
 import type { Signal, SignalValue } from './signals/types'
 import { diffSignals, fingerprint, stabilityBySignal } from './core'
+import { compactDisplayValue } from './presentation'
 import { forgetVisit, loadVisit, saveVisit, type SavedVisit } from './persistence'
 
 const signals = shallowRef<Signal[]>([])
@@ -38,6 +39,11 @@ function displayValue(value: SignalValue): string {
   if (value === null) return 'No value'
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+function previewValue(signal: Signal): string {
+  const value = signal.available ? displayValue(signal.value) : signal.reason ?? 'This browser does not expose this value.'
+  return compactDisplayValue(value)
 }
 
 function isUnavailable(value: SignalValue): boolean {
@@ -192,26 +198,32 @@ function forgetMe(): void {
 
       <section class="catalogue" aria-label="Browser signals">
         <div class="section-heading">
-          <div><p class="section-label">The readings</p><h2>What a page can see</h2></div>
+          <div><p class="section-label">The readings</p><h2>What a page can see</h2><p class="section-help">Open a signal for its explanation and tracker context.</p></div>
           <p v-if="repeated" class="status-key"><span class="stable-mark">Stable</span><span class="flaky-mark">Flaky</span></p>
         </div>
         <section v-for="([category, rows]) in groups" :key="category" class="signal-group">
           <h3 class="category-title">{{ category }}</h3>
-          <article v-for="signal in rows" :key="signal.id" class="signal-row" :class="{ 'signal-changed': changes.some((change) => change.id === signal.id) }">
-            <div class="signal-main">
-              <div class="signal-topline">
-                <h4>{{ signal.label }}</h4>
-                <span v-if="repeated" class="stability-state" :class="stability[signal.id] ? 'is-stable' : 'is-flaky'">{{ stability[signal.id] ? 'Stable' : 'Flaky' }}</span>
-                <span v-if="changes.some((change) => change.id === signal.id)" class="changed-tag">Changed</span>
-              </div>
-              <code class="signal-value" :class="{ unavailable: !signal.available }">{{ signal.available ? displayValue(signal.value) : signal.reason }}</code>
+          <details v-for="signal in rows" :key="signal.id" class="signal-card" :class="{ 'signal-changed': changes.some((change) => change.id === signal.id) }">
+            <summary class="signal-summary">
+              <span class="signal-summary-copy">
+                <span class="signal-heading">
+                  <span class="signal-label">{{ signal.label }}</span>
+                  <span v-if="repeated" class="stability-state" :class="stability[signal.id] ? 'is-stable' : 'is-flaky'">{{ stability[signal.id] ? 'Stable' : 'Flaky' }}</span>
+                  <span v-if="changes.some((change) => change.id === signal.id)" class="changed-tag">Changed</span>
+                </span>
+                <code class="signal-preview" :class="{ unavailable: !signal.available }">{{ previewValue(signal) }}</code>
+              </span>
+              <span class="details-hint"><span class="details-open">Details</span><span class="details-close">Hide</span><span class="details-chevron" aria-hidden="true"></span></span>
+            </summary>
+            <div class="signal-details">
+              <p class="signal-full-value"><strong>{{ signal.available ? 'Full value' : 'Unavailable reason' }}</strong><code :class="{ unavailable: !signal.available }">{{ signal.available ? displayValue(signal.value) : signal.reason }}</code></p>
               <p class="signal-explanation">{{ signal.explanation }}</p>
+              <dl class="signal-context">
+                <div><dt>What a tracker may do</dt><dd>{{ signal.trackerUse }}</dd></div>
+                <div><dt>What can change it</dt><dd>{{ signal.changesWhen }}</dd></div>
+              </dl>
             </div>
-            <div class="signal-context">
-              <p><strong>Tracker use</strong><span>{{ signal.trackerUse }}</span></p>
-              <p><strong>Can change when</strong><span>{{ signal.changesWhen }}</span></p>
-            </div>
-          </article>
+          </details>
         </section>
       </section>
 
