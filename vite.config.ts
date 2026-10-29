@@ -3,8 +3,8 @@ import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  base: '/Fingerprint/',
-  server: { host: '0.0.0.0', allowedHosts: true },
+  base: '/fingerprint/',
+  server: { host: '0.0.0.0', allowedHosts: ['.e2b.app'] },
   plugins: [
     vue(),
     VitePWA({
@@ -17,8 +17,8 @@ export default defineConfig({
         theme_color: '#08090b',
         background_color: '#08090b',
         display: 'standalone',
-        start_url: '/Fingerprint/',
-        scope: '/Fingerprint/',
+        start_url: '/fingerprint/',
+        scope: '/fingerprint/',
         icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
       },
       workbox: { navigateFallback: 'index.html' }
